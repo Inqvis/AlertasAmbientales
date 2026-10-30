@@ -4,18 +4,19 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ExampleUnitTest {
+    private fun statuses(t: Double, soil: Int, air: Int, light: Int) =
+        evaluateSensors(t, soil, air, light).map { it.status }
+
     @Test
     fun evaluateSensors_checksOptimalWarningAndCriticalThresholds() {
-        val optimal = evaluateSensors(tempC = 22.0, soilHumidityPct = 70, airHumidityPct = 65, lightLux = 6000)
-        assertEquals(listOf(SensorStatus.OPTIMAL, SensorStatus.OPTIMAL, SensorStatus.OPTIMAL, SensorStatus.OPTIMAL), optimal.map { it.status })
+        val ok = SensorStatus.OPTIMAL
+        val warn = SensorStatus.WARNING
+        val crit = SensorStatus.CRITICAL
 
-        val warning = evaluateSensors(tempC = 27.0, soilHumidityPct = 50, airHumidityPct = 75, lightLux = 5000)
-        assertEquals(listOf(SensorStatus.WARNING, SensorStatus.WARNING, SensorStatus.WARNING, SensorStatus.OPTIMAL), warning.map { it.status })
-
-        val criticalLow = evaluateSensors(tempC = 8.0, soilHumidityPct = 20, airHumidityPct = 35, lightLux = 4000)
-        assertEquals(listOf(SensorStatus.CRITICAL, SensorStatus.CRITICAL, SensorStatus.CRITICAL, SensorStatus.CRITICAL), criticalLow.map { it.status })
-
-        val criticalHigh = evaluateSensors(tempC = 31.0, soilHumidityPct = 95, airHumidityPct = 90, lightLux = 4999)
-        assertEquals(listOf(SensorStatus.CRITICAL, SensorStatus.CRITICAL, SensorStatus.CRITICAL, SensorStatus.CRITICAL), criticalHigh.map { it.status })
+        assertEquals(listOf(ok, ok, ok, ok), statuses(22.0, 70, 65, 70))
+        assertEquals(listOf(warn, warn, warn, warn), statuses(27.0, 50, 75, 40))
+        assertEquals(listOf(warn, warn, warn, warn), statuses(17.0, 85, 55, 69))
+        assertEquals(listOf(crit, crit, crit, crit), statuses(8.0, 20, 35, 39))
+        assertEquals(listOf(crit, crit, crit, crit), statuses(31.0, 95, 90, 10))
     }
 }

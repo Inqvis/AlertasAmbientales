@@ -25,7 +25,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -36,7 +41,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private val Paper = Color(0xFFF4F1EA)
 private val Ink = Color(0xFF1F2A22)
@@ -67,7 +76,7 @@ fun evaluateSensors(
     tempC: Double,
     soilHumidityPct: Int,
     airHumidityPct: Int,
-    lightLux: Int
+    lightPct: Int
 ): List<SensorReading> = listOf(
     SensorReading(
         title = "Temperatura",
@@ -131,13 +140,22 @@ fun evaluateSensors(
     ),
     SensorReading(
         title = "Luz",
-        value = "%,d".format(lightLux),
-        unit = "lx",
-        numeric = lightLux.toFloat(),
-        status = if (lightLux < 5000) SensorStatus.CRITICAL else SensorStatus.OPTIMAL,
-        detail = if (lightLux < 5000) "luz insuficiente" else "",
-        scale = 0f..15000f, optimal = 5000f..15000f, critLow = 5000f, critHigh = 15000f,
-        rangeNote = "Mínimo 5.000 lx"
+        value = "$lightPct",
+        unit = "%",
+        numeric = lightPct.toFloat(),
+        status = when {
+            lightPct < 40 -> SensorStatus.CRITICAL
+            lightPct >= 70 -> SensorStatus.OPTIMAL
+            else -> SensorStatus.WARNING
+        },
+        detail = when {
+            lightPct < 20 -> "luz muy baja"
+            lightPct < 40 -> "déficit de luz"
+            lightPct < 70 -> "luz moderada"
+            else -> ""
+        },
+        scale = 0f..100f, optimal = 70f..100f, critLow = 40f, critHigh = 100f,
+        rangeNote = "Óptimo desde 70 % · déficit bajo 40 · crítico bajo 20"
     )
 )
 
@@ -155,8 +173,38 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun AgroVerdeDashboard() {
-    // shortcut: static sample values until Firebase is connected
-    val readings = evaluateSensors(tempC = 32.4, soilHumidityPct = 68, airHumidityPct = 52, lightLux = 4200)
+    var readings by remember { mutableStateOf<List<SensorReading>>(emptyList()) }
+    var statusLine by remember { mutableStateOf("Conectando con Firebase…") }
+
+    DisposableEffect(Unit) {
+        val registration = FirebaseFirestore.getInstance()
+            .collection("monitoreo_agricola")
+            .document("estado_actual")
+            .addSnapshotListener { doc, error ->
+                val temp = doc?.getDouble("temperatura")
+                val soil = doc?.getLong("humedad_suelo")
+                val air = doc?.getLong("humedad_relativa")
+                val light = doc?.getLong("nivel_luz")
+                when {
+                    error != null -> statusLine = "Error de conexión: ${error.message}"
+                    doc == null || !doc.exists() -> statusLine = "Sin datos en estado_actual"
+                    temp == null || soil == null || air == null || light == null ->
+                        statusLine = "Documento incompleto en estado_actual"
+                    else -> {
+                        readings = evaluateSensors(temp, soil.toInt(), air.toInt(), light.toInt())
+                        statusLine = "En vivo · actualizado " +
+                            SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+                    }
+                }
+            }
+        onDispose { registration.remove() }
+    }
+
+    DashboardContent(readings, statusLine)
+}
+
+@Composable
+private fun DashboardContent(readings: List<SensorReading>, statusLine: String) {
     val alerts = readings.filter { it.status != SensorStatus.OPTIMAL }
     val hasCritical = alerts.any { it.status == SensorStatus.CRITICAL }
 
@@ -182,7 +230,7 @@ fun AgroVerdeDashboard() {
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp, vertical = 20.dp)
         ) {
-            Header(alertCount = alerts.size, total = readings.size)
+            Header(alertCount = alerts.size, total = readings.size, statusLine = statusLine)
 
             if (alerts.isNotEmpty()) {
                 Spacer(Modifier.height(32.dp))
@@ -190,8 +238,10 @@ fun AgroVerdeDashboard() {
                 alerts.forEach { AlertRow(it) }
             }
 
-            Spacer(Modifier.height(32.dp))
-            SectionLabel("Lecturas")
+            if (readings.isNotEmpty()) {
+                Spacer(Modifier.height(32.dp))
+                SectionLabel("Lecturas")
+            }
             readings.forEachIndexed { i, sensor ->
                 if (i > 0) HorizontalDivider(color = Hairline, thickness = 1.dp)
                 SensorRow(sensor)
@@ -201,7 +251,7 @@ fun AgroVerdeDashboard() {
 }
 
 @Composable
-private fun Header(alertCount: Int, total: Int) {
+private fun Header(alertCount: Int, total: Int, statusLine: String) {
     Text(
         "AGROVERDE GLOBAL",
         color = Muted,
@@ -212,14 +262,18 @@ private fun Header(alertCount: Int, total: Int) {
     Text("Invernadero 1", color = Ink, fontSize = 15.sp)
     Spacer(Modifier.height(28.dp))
     Text(
-        text = if (alertCount == 0) "Todo en rango." else "$alertCount de $total lecturas\nfuera de rango.",
+        text = when {
+            total == 0 -> "Esperando\nlecturas."
+            alertCount == 0 -> "Todo en rango."
+            else -> "$alertCount de $total lecturas\nfuera de rango."
+        },
         color = Ink,
         fontFamily = FontFamily.Serif,
         fontSize = 34.sp,
         lineHeight = 40.sp
     )
     Spacer(Modifier.height(8.dp))
-    Text("Datos de ejemplo · Firebase sin conectar", color = Muted, fontSize = 13.sp)
+    Text(statusLine, color = Muted, fontSize = 13.sp)
 }
 
 @Composable
@@ -329,5 +383,5 @@ private fun RangeBar(sensor: SensorReading) {
 @Preview(showBackground = true, heightDp = 1100)
 @Composable
 fun AgroVerdeDashboardPreview() {
-    AgroVerdeDashboard()
+    DashboardContent(evaluateSensors(32.4, 68, 52, 35), "Vista previa")
 }
