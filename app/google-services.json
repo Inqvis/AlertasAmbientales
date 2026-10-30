@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1078589501401",
+    "project_id": "alertatemperaturas-11fc1",
+    "storage_bucket": "alertatemperaturas-11fc1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1078589501401:android:6682d7186afe0d305373c8",
+        "android_client_info": {
+          "package_name": "com.example.alertatemperaturas"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBnR5zSgnTQAlm53DLucRJ6FH5FC_xu4iw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
