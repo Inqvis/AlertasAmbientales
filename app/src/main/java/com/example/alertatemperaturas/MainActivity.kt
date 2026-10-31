@@ -1,11 +1,15 @@
 package com.example.alertatemperaturas
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -36,11 +40,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
@@ -160,8 +166,22 @@ fun evaluateSensors(
 )
 
 class MainActivity : ComponentActivity() {
+
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Notificaciones: canal + permiso (Android 13+)
+        NotificationHelper.createChannel(this)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+
         // Light background is forced, so keep dark status bar icons even in system dark mode.
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
@@ -173,8 +193,10 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun AgroVerdeDashboard() {
+    val context = LocalContext.current
     var readings by remember { mutableStateOf<List<SensorReading>>(emptyList()) }
     var statusLine by remember { mutableStateOf("Conectando con Firebase…") }
+    var previousCritical by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     DisposableEffect(Unit) {
         val registration = FirebaseFirestore.getInstance()
@@ -193,11 +215,38 @@ fun AgroVerdeDashboard() {
                     else -> {
                         readings = evaluateSensors(temp, soil.toInt(), air.toInt(), light.toInt())
                         statusLine = "En vivo · actualizado " +
-                            SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+                                SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
                     }
                 }
             }
         onDispose { registration.remove() }
+    }
+
+    // Notificaciones de alertas críticas (solo mientras la app está abierta)
+    LaunchedEffect(readings) {
+        if (readings.isEmpty()) return@LaunchedEffect
+
+        val nowCritical = readings.filter { it.status == SensorStatus.CRITICAL }
+        val nowTitles = nowCritical.map { it.title }.toSet()
+
+        // Sensores que acaban de pasar a crítico -> notificar
+        nowCritical
+            .filter { it.title !in previousCritical }
+            .forEach { sensor ->
+                NotificationHelper.showCritical(
+                    context = context,
+                    notificationId = sensor.title.hashCode(),
+                    title = "⚠ ${sensor.title} en estado crítico",
+                    text = "${sensor.value} ${sensor.unit} · ${sensor.detail}"
+                )
+            }
+
+        // Sensores que volvieron a la normalidad -> quitar su notificación
+        (previousCritical - nowTitles).forEach { title ->
+            NotificationHelper.cancel(context, title.hashCode())
+        }
+
+        previousCritical = nowTitles
     }
 
     DashboardContent(readings, statusLine)
